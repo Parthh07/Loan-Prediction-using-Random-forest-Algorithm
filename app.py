@@ -48,6 +48,31 @@ def predict_loan(model, encoders, scaler, inputs):
     label = encoders["Loan_Status"].inverse_transform([pred])[0]
     return label, proba
 
+
+def predict_batch(model, encoders, scaler, df_raw):
+    """Run predictions on a cleaned batch DataFrame; returns df with Decision & Probability columns."""
+    df = df_raw.copy()
+    required = ["Gender","Married","Dependents","Education","Self_Employed",
+                "ApplicantIncome","CoapplicantIncome","LoanAmount","Loan_Amount_Term",
+                "Credit_History","Property_Area"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        return None, f"Missing columns: {', '.join(missing)}"
+    try:
+        for col in ["Gender","Married","Dependents","Education","Self_Employed","Property_Area"]:
+            df[col] = encoders[col].transform(df[col].astype(str))
+        df[["ApplicantIncome","CoapplicantIncome","LoanAmount","Loan_Amount_Term"]] = \
+            scaler.transform(df[["ApplicantIncome","CoapplicantIncome","LoanAmount","Loan_Amount_Term"]])
+        preds  = model.predict(df[required].values)
+        probas = model.predict_proba(df[required].values)[:, 1]
+        labels = encoders["Loan_Status"].inverse_transform(preds)
+        result = df_raw.copy()
+        result["Decision"]           = labels
+        result["Approval_Probability"] = (probas * 100).round(1)
+        return result, None
+    except Exception as e:
+        return None, str(e)
+
 if not os.path.exists("model/loan_rf_model.pkl"):
     with st.spinner("🔄 First-time setup: training model, please wait ~30 seconds..."):
         import subprocess, sys
@@ -519,11 +544,12 @@ COLORS_NAMED = {"Y": "#0076CE", "N": "#ef4444"}
 # ─────────────────────────────────────────────────────────────────────────────
 # Tabs
 # ─────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔍  Credit Assessment",
     "📊  Data Insights",
     "📈  Model Report",
     "ℹ️  Documentation",
+    "📂  Batch Upload",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -933,6 +959,208 @@ with tab4:
         assessments must comply with applicable financial regulations and involve qualified professionals.
       </div>
     </div>""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 – BATCH CSV UPLOAD
+# ══════════════════════════════════════════════════════════════════════════════
+with tab5:
+    st.markdown("""
+    <div class="sh">
+      <div class="sh-title">Batch CSV Prediction</div>
+      <div class="sh-desc">Upload a CSV file with multiple applicants and get instant bulk predictions</div>
+    </div>
+    <hr class="sh-rule">
+    """, unsafe_allow_html=True)
+
+    # ── Template download
+    TEMPLATE_COLS = [
+        "Gender", "Married", "Dependents", "Education", "Self_Employed",
+        "ApplicantIncome", "CoapplicantIncome", "LoanAmount",
+        "Loan_Amount_Term", "Credit_History", "Property_Area",
+    ]
+    SAMPLE_ROWS = [
+        ["Male",   "Yes", "0",  "Graduate",     "No",  55000, 0,    150, 360, 1.0, "Semiurban"],
+        ["Female", "No",  "1",  "Not Graduate", "Yes", 32000, 5000, 120, 360, 1.0, "Urban"],
+        ["Male",   "Yes", "2",  "Graduate",     "No",  48000, 8000, 200, 300, 0.0, "Rural"],
+        ["Female", "No",  "3+", "Graduate",     "No",  75000, 0,    250, 360, 1.0, "Urban"],
+        ["Male",   "Yes", "0",  "Not Graduate", "Yes", 22000, 3000, 80,  180, 0.0, "Semiurban"],
+    ]
+    template_df = pd.DataFrame(SAMPLE_ROWS, columns=TEMPLATE_COLS)
+    template_csv = template_df.to_csv(index=False).encode("utf-8")
+
+    bl, br = st.columns([2, 1])
+    with bl:
+        st.markdown("""
+        <div class="fc">
+          <div class="fc-header">
+            <span class="fc-icon">📋</span>
+            <span class="fc-title">Step 1 — Download the Template</span>
+          </div>
+          <div style="font-size:0.84rem;color:#475569;line-height:1.8;">
+            Download the CSV template below. Fill in one applicant per row using the accepted values:
+            <ul style="margin-top:0.5rem;padding-left:1.1rem;">
+              <li><strong>Gender</strong>: Male / Female</li>
+              <li><strong>Married</strong>: Yes / No</li>
+              <li><strong>Dependents</strong>: 0 / 1 / 2 / 3+</li>
+              <li><strong>Education</strong>: Graduate / Not Graduate</li>
+              <li><strong>Self_Employed</strong>: Yes / No</li>
+              <li><strong>ApplicantIncome / CoapplicantIncome</strong>: Monthly income in ₹</li>
+              <li><strong>LoanAmount</strong>: Amount in ₹ thousands</li>
+              <li><strong>Loan_Amount_Term</strong>: Months (e.g. 360)</li>
+              <li><strong>Credit_History</strong>: 1.0 = Good · 0.0 = Poor</li>
+              <li><strong>Property_Area</strong>: Semiurban / Urban / Rural</li>
+            </ul>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.download_button(
+            label="⬇️  Download CSV Template",
+            data=template_csv,
+            file_name="loansense_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    with br:
+        st.markdown("""
+        <div class="fc" style="height:100%;">
+          <div class="fc-header">
+            <span class="fc-icon">💡</span>
+            <span class="fc-title">Tips</span>
+          </div>
+          <div style="font-size:0.82rem;color:#475569;line-height:1.9;">
+            ✔ Save as <strong>.csv</strong> (UTF-8)<br>
+            ✔ Keep column headers exactly as shown<br>
+            ✔ Max <strong>5,000</strong> rows per upload<br>
+            ✔ Blanks / NaNs will flag an error<br>
+            ✔ Results downloadable as CSV
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── File uploader
+    st.markdown("""
+    <div class="fc">
+      <div class="fc-header">
+        <span class="fc-icon">📂</span>
+        <span class="fc-title">Step 2 — Upload Your CSV</span>
+        <span class="fc-desc">Supports .csv files up to 200 MB</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    uploaded = st.file_uploader(
+        "Drag & drop or browse to upload your applicant CSV",
+        type=["csv"],
+        help="The file must contain exactly the 11 required columns.",
+        key="batch_csv_uploader",
+    )
+
+    if uploaded is not None:
+        try:
+            raw_df = pd.read_csv(uploaded)
+        except Exception as e:
+            st.error(f"❌ Could not parse file: {e}")
+            raw_df = None
+
+        if raw_df is not None:
+            # Guard: row count
+            if len(raw_df) > 5000:
+                st.warning("⚠️ File exceeds 5,000 rows — only the first 5,000 will be processed.")
+                raw_df = raw_df.head(5000)
+
+            # Guard: NaN check
+            null_count = raw_df[TEMPLATE_COLS].isnull().sum().sum() if all(c in raw_df.columns for c in TEMPLATE_COLS) else -1
+            if null_count > 0:
+                st.warning(f"⚠️ {null_count} missing value(s) detected. Rows with missing data may cause errors.")
+                raw_df = raw_df.dropna(subset=[c for c in TEMPLATE_COLS if c in raw_df.columns])
+
+            with st.spinner("⚙️ Running batch predictions…"):
+                result_df, err = predict_batch(model, encoders, scaler, raw_df)
+
+            if err:
+                st.error(f"❌ Prediction error: {err}")
+            else:
+                # ── Summary KPIs
+                total_r   = len(result_df)
+                approved_r = (result_df["Decision"] == "Y").sum()
+                rejected_r = total_r - approved_r
+                avg_prob  = result_df["Approval_Probability"].mean()
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Total Applicants", f"{total_r:,}")
+                k2.metric("✅ Approved",       f"{approved_r:,}",  f"{approved_r/total_r*100:.1f}%")
+                k3.metric("❌ Rejected",       f"{rejected_r:,}",  f"{rejected_r/total_r*100:.1f}%")
+                k4.metric("Avg Approval Score", f"{avg_prob:.1f}%")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # ── Donut chart
+                fig_donut = px.pie(
+                    values=[approved_r, rejected_r],
+                    names=["Approved", "Rejected"],
+                    hole=0.6,
+                    color_discrete_sequence=["#0076CE", "#ef4444"],
+                    title="Batch Decision Distribution",
+                )
+                fig_donut.update_layout(**PL, height=280)
+
+                # ── Probability histogram
+                fig_hist = px.histogram(
+                    result_df, x="Approval_Probability", nbins=20,
+                    title="Approval Probability Distribution",
+                    color_discrete_sequence=["#0076CE"],
+                    labels={"Approval_Probability": "Approval Probability (%)"},
+                )
+                fig_hist.update_layout(**PL, height=280)
+
+                ch1, ch2 = st.columns(2)
+                with ch1:
+                    st.plotly_chart(fig_donut, use_container_width=True)
+                with ch2:
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+                # ── Results table with styled Decision column
+                st.markdown("**Prediction Results**")
+                display_df = result_df.copy()
+                display_df["Decision"] = display_df["Decision"].map(
+                    {"Y": "✅ Approved", "N": "❌ Rejected"}
+                )
+                display_df["Approval_Probability"] = display_df["Approval_Probability"].apply(
+                    lambda x: f"{x:.1f}%"
+                )
+
+                # Colour rows: green = approved, red = rejected
+                def row_color(row):
+                    if "Approved" in str(row["Decision"]):
+                        return ["background-color: #f0fdf4"] * len(row)
+                    return ["background-color: #fff8f8"] * len(row)
+
+                styled = display_df.style.apply(row_color, axis=1)
+                st.dataframe(styled, use_container_width=True, height=400)
+
+                # ── Download results
+                out_csv = result_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="⬇️  Download Full Results as CSV",
+                    data=out_csv,
+                    file_name="loansense_batch_results.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+    else:
+        st.markdown("""
+        <div class="placeholder">
+          <div class="ph-icon">📂</div>
+          <div class="ph-text">
+            Upload a CSV to run bulk predictions<br>
+            <span class="ph-cta">Download the template above</span> to get started
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
